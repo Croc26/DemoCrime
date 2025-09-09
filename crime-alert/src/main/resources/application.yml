@@ -1,0 +1,72 @@
+# ===================== DEFAULT: H2 IN-MEMORY =====================
+spring:
+  datasource:
+    url: jdbc:h2:mem:crime_alert;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update   # dev only
+    properties:
+      hibernate.format_sql: true
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+server:
+  port: 8080
+
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health.show-details: always
+
+app:
+  jwt:
+    secret: "change-this-key-to-at-least-256-bits-long-for-production"
+    expirationMinutes: 120
+
+# ===================== POSTGRES PROFILE =====================
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/crime_alert
+    driver-class-name: org.postgresql.Driver
+    username: postgres
+    password: postgres
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate.format_sql: true
+    open-in-view: false
+
+server:
+  port: 8080
+
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health.show-details: always
+
+app:
+  jwt:
+    secret: "rotate-this-secret-in-prod-too"
+    expirationMinutes: 120
+    spring:
+      h2:
+        console:
+          enabled: true
+          path: /h2-console
+          springdoc:
+            swagger-ui:
+              tags-sorter: alpha
+              operations-sorter: alpha
+
+
