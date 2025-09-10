@@ -1,4 +1,20 @@
 package com.example.crimealert;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import java.util.List;
+
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -9,8 +25,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -19,6 +33,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
 
 import jakarta.persistence.*;
 import jakarta.servlet.FilterChain;
@@ -67,9 +84,10 @@ public class CrimeAlertApplication {
     }
 }
 
-/** ===================== SECURITY ===================== **/
+/** ===================== SECURITY CONFIG ===================== **/
 @Configuration
-class SecurityConfig {
+@EnableWebSecurity
+public class SecurityConfig {
 
     private final JwtAuthFilter jwtFilter;
     public SecurityConfig(JwtAuthFilter jwtFilter) { this.jwtFilter = jwtFilter; }
@@ -77,54 +95,85 @@ class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                .cors(c -> {})                               // if you added CorsConfig
+                .cors(Customizer.withDefaults())
                 .csrf(cs -> cs.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // allow browser preflight
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
                         // public pages
                         .requestMatchers("/", "/index.html").permitAll()
+
                         // Swagger / OpenAPI
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+
                         // H2 console (dev)
                         .requestMatchers("/h2-console/**").permitAll()
+
                         // auth + health
                         .requestMatchers("/api/auth/**", "/actuator/health").permitAll()
+
                         // everything else requires JWT
                         .anyRequest().authenticated()
                 )
                 .headers(h -> h.frameOptions(f -> f.sameOrigin())) // H2 console
+                .exceptionHandling(ex -> ex
+                        // Return 401 on missing/invalid JWT instead of 403/redirect
+                        .authenticationEntryPoint((req, res, e) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED))
+                        .accessDeniedHandler((req, res, e) -> res.sendError(HttpServletResponse.SC_FORBIDDEN))
+                )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
-}
 
+    // Simple permissive CORS for local dev; tighten for prod.
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        var c = new CorsConfiguration();
+        c.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173", "http://localhost:8080"));
+        c.setAllowedMethods(List.of("GET","POST","PUT","DELETE","PATCH","OPTIONS"));
+        c.setAllowedHeaders(List.of("*"));
+        c.setAllowCredentials(true);
+        var s = new UrlBasedCorsConfigurationSource();
+        s.registerCorsConfiguration("/**", c);
+        return s;
+    }
+}
 @Component
-class JwtAuthFilter extends org.springframework.web.filter.OncePerRequestFilter {
+public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtService jwt;
     private final UserRepository users;
 
-    JwtAuthFilter(JwtService jwt, UserRepository users) { this.jwt = jwt; this.users = users; }
+    public JwtAuthFilter(JwtService jwt, UserRepository users) {
+        this.jwt = jwt; this.users = users;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
+
         String header = req.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
             try {
                 String email = jwt.getSubject(token);
-                Optional<User> userOpt = users.findByEmail(email);
-                if (userOpt.isPresent()) {
-                    var role = userOpt.get().getRole();
+                users.findByEmail(email).ifPresent(user -> {
+                    String roleName = user.getRole().name();              // e.g. ADMIN
+                    if (!roleName.startsWith("ROLE_")) roleName = "ROLE_" + roleName;
+
                     var auth = new UsernamePasswordAuthenticationToken(
-                            email, null, List.of(new SimpleGrantedAuthority("ROLE_" + role.name())));
+                            email, null, List.of(new SimpleGrantedAuthority(roleName))
+                    );
                     SecurityContextHolder.getContext().setAuthentication(auth);
-                }
-            } catch (Exception ignored) { }
+                });
+            } catch (Exception ignored) { /* optionally log */ }
         }
         chain.doFilter(req, res);
     }
 }
+
 
 @Service
 class JwtService {
@@ -275,6 +324,7 @@ enum IncidentType { CRIME, FIRE, MEDICAL, TRAFFIC, OTHER }
 
 @Embeddable
 class GeoPoint {
+
     private Double lat;
     private Double lng;
     public GeoPoint() {}
